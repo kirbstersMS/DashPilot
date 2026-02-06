@@ -175,13 +175,20 @@ class DoorDashStrategy : ScraperStrategy {
                 distanceMiles = cachedMiles,
                 durationMinutes = if (foundMinutes > 0) foundMinutes else cachedMinutes,
                 orderCount = cachedCount,
-                dropoffLocation = cachedAddress // Returns empty string until detected
+                dropoffLocation = cachedAddress
             )
 
             // Logging Signature
             val currentSignature = "${finalOrder.price}|${finalOrder.distanceMiles}|${finalOrder.dropoffLocation}"
+
+            // Only dump if the state has changed (New Order or Address Update)
             if (currentSignature != lastLoggedSignature) {
                 GigLogger.i("DoorDash", "Order State Update ($currentSignature)")
+
+                // [VIBE CODE] Forensic Snapshot
+                GigLogger.i("DoorDash", ">>> CAPTURING FORENSIC TREE DUMP <<<")
+                GigLogger.logTree(root)
+
                 lastLoggedSignature = currentSignature
             }
 
