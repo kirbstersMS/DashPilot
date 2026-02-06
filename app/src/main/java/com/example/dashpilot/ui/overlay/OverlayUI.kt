@@ -22,9 +22,6 @@ fun OverlayHUD(order: GigOrder) {
     val context = LocalContext.current
     val prefs = GigPrefs(context)
 
-    val minRequired = if (order.orderCount > 1) prefs.minPayBundleThreshold else prefs.minPayThreshold
-    val isPricePass = order.price >= minRequired
-
     // --- THEME LOGIC ---
     val isDark = prefs.isOverlayDarkTheme
     val scale = prefs.fontScale
@@ -36,19 +33,26 @@ fun OverlayHUD(order: GigOrder) {
     // Scaled Fonts
     val labelSize = (10 * scale).sp
     val valueSize = (18 * scale).sp
-    val headerSize = (22 * scale).sp // Slightly larger for the main Pay
+    val headerSize = (22 * scale).sp
 
-    fun getColor(value: Double, low: Float, high: Float): Color {
-        return when {
-            value < low -> Color(0xFFFF5252) // Red
-            value >= high -> Color(0xFF00C853) // Green
-            else -> Color(0xFFFFD600) // Yellow
-        }
-    }
+    // --- BINARY DECISION LOGIC ---
+    val targetMile = prefs.targetDollarsPerMile
+    val targetHour = prefs.targetDollarsPerHour
 
-    val mileColor = getColor(order.dollarsPerMile, prefs.mileLowThreshold, prefs.mileHighThreshold)
-    val hourlyColor = getColor(order.dollarsPerHour, prefs.hourlyLowThreshold, prefs.hourlyHighThreshold)
-    val payColor = if (isPricePass) Color(0xFF00C853) else Color(0xFFFF5252)
+    val isMileGood = order.dollarsPerMile >= targetMile
+    val isHourGood = order.dollarsPerHour >= targetHour
+
+    // Strict Pass/Fail Colors
+    val passColor = Color(0xFF00C853) // Vivid Green
+    val failColor = Color(0xFFFF5252) // Vivid Red
+
+    val mileColor = if (isMileGood) passColor else failColor
+    val hourlyColor = if (isHourGood) passColor else failColor
+
+    // Main Pay Color: Green only if the order is a total "Win" (passes all checks)
+    // Otherwise Red to indicate it drags down at least one metric.
+    val isTotalWin = isMileGood && isHourGood
+    val payColor = if (isTotalWin) passColor else failColor
 
     Card(
         modifier = Modifier
@@ -61,10 +65,9 @@ fun OverlayHUD(order: GigOrder) {
         Column(modifier = Modifier.padding(12.dp)) {
 
             // --- HEADER: TOTAL PAY ---
-            // "move the pay metric above the current 2x2 grid... onto its own smaller line"
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center, // Centered for emphasis
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -77,7 +80,7 @@ fun OverlayHUD(order: GigOrder) {
                 if (order.orderCount > 1) {
                     Text(
                         text = "(${order.orderCount}x) ",
-                        color = Color.Yellow, // Alert the user it's a stack
+                        color = Color.Yellow,
                         fontSize = labelSize,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.alignByBaseline()
@@ -96,19 +99,15 @@ fun OverlayHUD(order: GigOrder) {
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.Gray.copy(alpha=0.3f)))
             Spacer(modifier = Modifier.height(8.dp))
 
-            // --- ROW 1: TIME (Minutes | $/HR) ---
+            // --- ROW 1: TIME ---
             Row(modifier = Modifier.fillMaxWidth()) {
-                // Left: Raw Minutes
                 Box(modifier = Modifier.weight(1f)) {
-                    // FIX: Check isEstimate flag
                     val timeText = if (order.isEstimate) "~${order.durationMinutes}m" else "${order.durationMinutes}m"
                     GridCell("TIME", timeText, baseTextColor, labelColor, labelSize, valueSize)
                 }
-
                 Spacer(modifier = Modifier.width(8.dp))
-
-                // Right: $/Hour
                 Box(modifier = Modifier.weight(1f)) {
+                    // $/HR
                     GridCell("$/HR", "$${"%.2f".format(order.dollarsPerHour)}", hourlyColor, labelColor, labelSize, valueSize)
                 }
             }
@@ -117,17 +116,14 @@ fun OverlayHUD(order: GigOrder) {
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.Gray.copy(alpha=0.3f)))
             Spacer(modifier = Modifier.height(8.dp))
 
-            // --- ROW 2: DISTANCE (Miles | $/Mi) ---
+            // --- ROW 2: DISTANCE ---
             Row(modifier = Modifier.fillMaxWidth()) {
-                // Left: Raw Miles
                 Box(modifier = Modifier.weight(1f)) {
                     GridCell("DIST", "%.1f mi".format(order.distanceMiles), baseTextColor, labelColor, labelSize, valueSize)
                 }
-
                 Spacer(modifier = Modifier.width(8.dp))
-
-                // Right: $/Mile
                 Box(modifier = Modifier.weight(1f)) {
+                    // $/MI
                     GridCell("$/MI", "$${"%.2f".format(order.dollarsPerMile)}", mileColor, labelColor, labelSize, valueSize)
                 }
             }
@@ -135,6 +131,7 @@ fun OverlayHUD(order: GigOrder) {
     }
 }
 
+// GridCell remains the same...
 @Composable
 fun GridCell(
     label: String,

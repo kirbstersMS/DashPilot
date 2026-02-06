@@ -14,8 +14,7 @@ import javax.inject.Singleton
 class GigPrefs @Inject constructor(@ApplicationContext context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("gig_pilot_prefs", Context.MODE_PRIVATE)
 
-    // --- REACTIVE STATE (NEW) ---
-    // We initialize this with the current value so collectors get it immediately.
+    // --- REACTIVE STATE ---
     private val _isScrapingEnabledFlow = MutableStateFlow(prefs.getBoolean("is_scraping_enabled", true))
     val isScrapingEnabledFlow: StateFlow<Boolean> = _isScrapingEnabledFlow.asStateFlow()
 
@@ -24,11 +23,9 @@ class GigPrefs @Inject constructor(@ApplicationContext context: Context) {
             "is_scraping_enabled" -> {
                 val newValue = sharedPreferences.getBoolean(key, true)
                 _isScrapingEnabled = newValue
-                _isScrapingEnabledFlow.value = newValue // Emit update
+                _isScrapingEnabledFlow.value = newValue
             }
-            "overlay_x" -> _overlayX = sharedPreferences.getInt(key, 20)
-            "overlay_y" -> _overlayY = sharedPreferences.getInt(key, 50)
-            "is_overlay_dark_theme" -> _isOverlayDarkTheme = sharedPreferences.getBoolean(key, true)
+            // Add listeners for other keys if you want instant UI updates elsewhere
         }
     }
 
@@ -42,45 +39,29 @@ class GigPrefs @Inject constructor(@ApplicationContext context: Context) {
         get() = _isScrapingEnabled
         set(value) = prefs.edit { putBoolean("is_scraping_enabled", value) }
 
-    // ... [Rest of your variables (overlayX, thresholds, etc) remain exactly the same] ...
-    private var _overlayX = prefs.getInt("overlay_x", 20)
+    // --- THE BINARY STRATEGY (NEW) ---
+    // Simple Pass/Fail Targets. No more "ranges".
+
+    var targetDollarsPerMile: Float
+        get() = prefs.getFloat("target_dlr_mile", 2.0f) // Default $2/mi
+        set(value) = prefs.edit { putFloat("target_dlr_mile", value) }
+
+    var targetDollarsPerHour: Float
+        get() = prefs.getFloat("target_dlr_hour", 25.0f) // Default $25/hr
+        set(value) = prefs.edit { putFloat("target_dlr_hour", value) }
+
+    // --- OVERLAY & THEME ---
     var overlayX: Int
-        get() = _overlayX
+        get() = prefs.getInt("overlay_x", 20)
         set(value) = prefs.edit { putInt("overlay_x", value) }
 
-    private var _overlayY = prefs.getInt("overlay_y", 50)
     var overlayY: Int
-        get() = _overlayY
+        get() = prefs.getInt("overlay_y", 50)
         set(value) = prefs.edit { putInt("overlay_y", value) }
 
-    private var _isOverlayDarkTheme = prefs.getBoolean("is_overlay_dark_theme", true)
     var isOverlayDarkTheme: Boolean
-        get() = _isOverlayDarkTheme
+        get() = prefs.getBoolean("is_overlay_dark_theme", true)
         set(value) = prefs.edit { putBoolean("is_overlay_dark_theme", value) }
-
-    var mileLowThreshold: Float
-        get() = prefs.getFloat("mile_low", 1.0f)
-        set(value) = prefs.edit { putFloat("mile_low", value) }
-
-    var mileHighThreshold: Float
-        get() = prefs.getFloat("mile_high", 2.0f)
-        set(value) = prefs.edit { putFloat("mile_high", value) }
-
-    var hourlyLowThreshold: Float
-        get() = prefs.getFloat("hourly_low", 20.0f)
-        set(value) = prefs.edit { putFloat("hourly_low", value) }
-
-    var hourlyHighThreshold: Float
-        get() = prefs.getFloat("hourly_high", 30.0f)
-        set(value) = prefs.edit { putFloat("hourly_high", value) }
-
-    var minPayThreshold: Float
-        get() = prefs.getFloat("min_pay", 6.0f)
-        set(value) = prefs.edit { putFloat("min_pay", value) }
-
-    var minPayBundleThreshold: Float
-        get() = prefs.getFloat("min_pay_bundle", 15.0f)
-        set(value) = prefs.edit { putFloat("min_pay_bundle", value) }
 
     var fontScale: Float
         get() = prefs.getFloat("font_scale", 1.0f)

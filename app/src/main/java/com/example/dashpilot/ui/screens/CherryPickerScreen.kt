@@ -38,13 +38,9 @@ fun CherryPickerScreen(overlayController: OverlayController) {
 
     var masterEnabled by remember { mutableStateOf(prefs.isScrapingEnabled) }
 
-    // Logic Vars
-    var mileLow by remember { mutableStateOf(prefs.mileLowThreshold.toString()) }
-    var mileHigh by remember { mutableStateOf(prefs.mileHighThreshold.toString()) }
-    var hourlyLow by remember { mutableStateOf(prefs.hourlyLowThreshold.toString()) }
-    var hourlyHigh by remember { mutableStateOf(prefs.hourlyHighThreshold.toString()) }
-    var minPay by remember { mutableStateOf(prefs.minPayThreshold.toString()) }
-    var minPayBundle by remember { mutableStateOf(prefs.minPayBundleThreshold.toString()) }
+    // --- NEW BINARY LOGIC VARS ---
+    var targetMile by remember { mutableStateOf(prefs.targetDollarsPerMile.toString()) }
+    var targetHour by remember { mutableStateOf(prefs.targetDollarsPerHour.toString()) }
 
     // Visual Vars
     var isOverlayDark by remember { mutableStateOf(prefs.isOverlayDarkTheme) }
@@ -73,7 +69,6 @@ fun CherryPickerScreen(overlayController: OverlayController) {
         }
     }
 
-    // ALIGNED: Using LazyColumn and 24.dp padding to match Earnings/Settings
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -87,44 +82,48 @@ fun CherryPickerScreen(overlayController: OverlayController) {
                     Switch(checked = masterEnabled, onCheckedChange = { masterEnabled = it; prefs.isScrapingEnabled = it })
                 }
                 Text(
-                    text = if (masterEnabled) "Service is Active" else "Service is Paused",
+                    text = if (masterEnabled) "Strategy Active" else "Strategy Paused",
                     color = if (masterEnabled) Color(0xFF00C853) else Color.Gray,
                     fontSize = 12.sp
                 )
             }
         }
 
-        // --- LOGIC RULES ---
+        // --- STRATEGY SECTION ---
         item {
-            Text("LOGIC RULES", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("THE STRATEGY", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
 
         item {
             Column {
-                SectionHeader("DOLLARS PER MILE ($/mi)")
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ThresholdInput("Low (Red)", mileLow, Modifier.weight(1f)) { mileLow = it; prefs.mileLowThreshold = it.toFloatOrNull() ?: 0f }
-                    ThresholdInput("High (Green)", mileHigh, Modifier.weight(1f)) { mileHigh = it; prefs.mileHighThreshold = it.toFloatOrNull() ?: 0f }
-                }
-            }
-        }
+                // Intro text to explain the Binary Logic
+                Text(
+                    "Set your minimum acceptable rates. Orders below these targets show Red. Orders matching or above show Green.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
 
-        item {
-            Column {
-                SectionHeader("HOURLY RATE ($/hr)")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ThresholdInput("Low (Red)", hourlyLow, Modifier.weight(1f)) { hourlyLow = it; prefs.hourlyLowThreshold = it.toFloatOrNull() ?: 0f }
-                    ThresholdInput("High (Green)", hourlyHigh, Modifier.weight(1f)) { hourlyHigh = it; prefs.hourlyHighThreshold = it.toFloatOrNull() ?: 0f }
-                }
-            }
-        }
+                    // Target $/Mile
+                    ThresholdInput(
+                        label = "Target $/Mile",
+                        value = targetMile,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        targetMile = it
+                        prefs.targetDollarsPerMile = it.toFloatOrNull() ?: 0f
+                    }
 
-        item {
-            Column {
-                SectionHeader("MINIMUM ORDER PRICE")
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ThresholdInput("Single Order ($)", minPay, Modifier.weight(1f)) { minPay = it; prefs.minPayThreshold = it.toFloatOrNull() ?: 0f }
-                    ThresholdInput("Bundle 2+ ($)", minPayBundle, Modifier.weight(1f)) { minPayBundle = it; prefs.minPayBundleThreshold = it.toFloatOrNull() ?: 0f }
+                    // Target $/Hour
+                    ThresholdInput(
+                        label = "Target $/Hour",
+                        value = targetHour,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        targetHour = it
+                        prefs.targetDollarsPerHour = it.toFloatOrNull() ?: 0f
+                    }
                 }
             }
         }
@@ -138,6 +137,7 @@ fun CherryPickerScreen(overlayController: OverlayController) {
             }
         }
 
+        // --- APPEARANCE CONTROLS (Unchanged) ---
         item {
             Box {
                 OutlinedTextField(
@@ -226,10 +226,11 @@ fun CherryPickerScreen(overlayController: OverlayController) {
 
 // --- PRIVATE HELPERS ---
 private fun generateTestOrder(): GigOrder {
-    val randomPrice = Random.nextDouble(5.0, 25.0)
-    val randomMiles = Random.nextDouble(1.5, 12.0)
+    // Generates a "middling" order so users can likely see one Green and one Red metric
+    val randomPrice = Random.nextDouble(4.0, 15.0)
+    val randomMiles = Random.nextDouble(1.0, 8.0)
     val estimatedMinutes = (randomMiles * 4).toInt() + 5
-    return GigOrder(platform = "Test", price = randomPrice, distanceMiles = randomMiles, durationMinutes = estimatedMinutes)
+    return GigOrder(platform = "DoorDash", price = randomPrice, distanceMiles = randomMiles, durationMinutes = estimatedMinutes)
 }
 
 @Composable private fun SectionHeader(text: String) {
@@ -241,5 +242,12 @@ private fun generateTestOrder(): GigOrder {
 }
 
 @Composable private fun ThresholdInput(label: String, value: String, modifier: Modifier = Modifier, onValueChange: (String) -> Unit) {
-    OutlinedTextField(value = value, onValueChange = onValueChange, label = { Text(label, fontSize = 10.sp) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = modifier)
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label, fontSize = 12.sp) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true,
+        modifier = modifier
+    )
 }

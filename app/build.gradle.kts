@@ -1,18 +1,18 @@
+import com.android.build.api.dsl.ApplicationExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.google.devtools.ksp)
-    alias(libs.plugins.google.dagger.hilt.android)
-    alias(libs.plugins.compose.compiler)
-}
+        plugins {
+            alias(libs.plugins.android.application)
+            alias(libs.plugins.kotlin.android)
+            alias(libs.plugins.google.devtools.ksp)
+            alias(libs.plugins.google.dagger.hilt.android)
+            alias(libs.plugins.compose.compiler)
+        }
 
-android {
+// FIX: Replaced deprecated 'android' block with 'configure<ApplicationExtension>'
+configure<ApplicationExtension> {
     namespace = "com.example.dashpilot"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36 // Modern assignment syntax
 
     defaultConfig {
         applicationId = "com.example.gigpilot.doordash"
@@ -27,10 +27,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            // Note: getDefaultProguardFile is legacy.
+            // Ensure 'proguard-rules.pro' exists in your app module.
+            proguardFiles("proguard-rules.pro")
         }
     }
     compileOptions {
@@ -68,16 +67,15 @@ dependencies {
     // Navigation
     implementation(libs.androidx.navigation.compose)
 
-    // Extended Icons (Fixes Icons.Filled.DragHandle, etc.)
+    // Extended Icons
     implementation(libs.androidx.material.icons.extended)
 
     // --- VIBE: BRAINS (Room Database) ---
     implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx) // Adds Coroutines support
-    ksp(libs.androidx.room.compiler)      // The compiler
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
     // --- VIBE: VISION (ML Kit) ---
-    // Text Recognition v2 (Latin script)
     implementation(libs.play.services.mlkit.text.recognition)
 
     // --- VIBE: WIRING (Hilt) ---
@@ -85,6 +83,5 @@ dependencies {
     ksp(libs.hilt.compiler)
 
     implementation(libs.play.services.location)
-
     implementation(libs.androidx.documentfile)
 }
