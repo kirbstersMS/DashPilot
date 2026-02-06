@@ -50,8 +50,6 @@ kotlin {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)
-    implementation(libs.material)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -74,9 +72,6 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
-
-    // --- VIBE: VISION (ML Kit) ---
-    implementation(libs.play.services.mlkit.text.recognition)
 
     // --- VIBE: WIRING (Hilt) ---
     implementation(libs.hilt.android)

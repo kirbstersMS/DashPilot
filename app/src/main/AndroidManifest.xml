@@ -19,8 +19,6 @@
     <queries>
         <package android:name="com.google.android.apps.maps" />
         <package android:name="com.doordash.driverapp" />
-        <package android:name="com.grubhub.driver" />
-        <package android:name="com.ubercab.driver" />
     </queries>
 
     <application
