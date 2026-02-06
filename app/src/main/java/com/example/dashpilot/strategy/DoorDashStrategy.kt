@@ -42,6 +42,7 @@ class DoorDashStrategy : ScraperStrategy {
 
         var isPoisoned = false
         var hasAcceptButton = false
+        var hasDeclineButton = false
 
         // 1. SCAN & FLATTEN
         while (queue.isNotEmpty()) {
@@ -64,6 +65,9 @@ class DoorDashStrategy : ScraperStrategy {
                     if (text.equals("Accept", ignoreCase = true)) {
                         hasAcceptButton = true
                     }
+                    if (text.equals("Decline", ignoreCase = true)) {
+                        hasDeclineButton = true
+                    }
                 }
             }
 
@@ -79,9 +83,11 @@ class DoorDashStrategy : ScraperStrategy {
             return ScrapeResult.NotFound
         }
 
-        // If we have no active order cached, we MUST see "Accept" to start a new one.
-        // If we DO have a cache, we allow "Accept" to disappear (Map Pin interaction mode).
-        if (cachedPrice == 0.0 && !hasAcceptButton) {
+        // STRICT MODE:
+        // If we don't see "Accept" OR "Decline", we are likely on the map/nav screen.
+        // We kill the cache immediately to prevent "Ghost Orders".
+        if (!hasAcceptButton && !hasDeclineButton) {
+            clearCache()
             return ScrapeResult.NotFound
         }
 
