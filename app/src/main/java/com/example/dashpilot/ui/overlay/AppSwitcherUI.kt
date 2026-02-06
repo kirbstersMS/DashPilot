@@ -77,16 +77,6 @@ fun AppSwitcherUI(
             launchApp(context, "com.doordash.driverapp")
         }
 
-        // 3. Grubhub (Orange GH)
-        AppIconText("GH", Color(0xFFFF8000)) {
-            launchApp(context, "com.grubhub.driver")
-        }
-
-        // 4. Uber (Black/White)
-        AppIconText("Uber", Color.White) {
-            launchApp(context, "com.ubercab.driver")
-        }
-
         // 5. STATUS TOGGLE (Replaces Home)
         // If not tracking, it acts as a "Start Shift" button (or Home)
         // If tracking, it is the Busy/Idle toggle

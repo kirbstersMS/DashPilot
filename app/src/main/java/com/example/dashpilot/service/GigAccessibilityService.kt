@@ -2,22 +2,20 @@ package com.example.dashpilot.service
 
 import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
-import android.graphics.Bitmap
-import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import com.example.dashpilot.data.GigPrefs
 import com.example.dashpilot.manager.GigFlowManager
-import com.example.dashpilot.manager.GigSideEffect
 import com.example.dashpilot.manager.GigUiState
 import com.example.dashpilot.ui.overlay.OverlayController
-import com.example.dashpilot.util.GigLogger
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 
 @SuppressLint("AccessibilityPolicy")
 @AndroidEntryPoint
@@ -27,27 +25,17 @@ class GigAccessibilityService : AccessibilityService() {
     @Inject lateinit var overlayController: OverlayController
     @Inject lateinit var prefs: GigPrefs
 
-    // Scope for the Service's lifecycle (UI updates, Prefs observation)
+    // Scope for the Service's lifecycle
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    // Scope for background tasks (Screenshotting)
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // VIBE: The "Gatekeeper". Prevents spamming the Manager with useless event spam.
-    // We let the Manager handle the heavy synchronization, but this saves us from
-    // launching 50 dead coroutines per second.
+    // Gatekeeper to prevent event spam
     private val isScanning = AtomicBoolean(false)
 
     @Volatile private var isScrapingActive: Boolean = true
     private var lastScrapeTime = 0L
 
-    // Supported Packages
-    private val uberPkg = "com.ubercab.driver"
-    private val supportedPackages = setOf(
-        uberPkg,
-        "com.doordash.driverapp",
-        "com.grubhub.driver"
-    )
+    // Target Package
+    private val dashPackage = "com.doordash.driverapp"
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -56,7 +44,7 @@ class GigAccessibilityService : AccessibilityService() {
         info.flags = info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         serviceInfo = info
 
-        // 1. Observe User Preferences (The On/Off Switch)
+        // 1. Observe User Preferences
         scope.launch {
             prefs.isScrapingEnabledFlow.collectLatest { enabled ->
                 isScrapingActive = enabled
@@ -67,28 +55,13 @@ class GigAccessibilityService : AccessibilityService() {
             }
         }
 
-        // 2. UI Bridge: Connect the Brain (Manager) to the View (Overlay)
+        // 2. UI Bridge
         scope.launch {
             flowManager.uiState.collectLatest { state ->
                 when (state) {
                     is GigUiState.Hidden -> overlayController.hide()
                     is GigUiState.ShowingOrder -> overlayController.show(state.order)
-                    is GigUiState.Stabilizing -> {
-                        // Optional: overlayController.showLoading()
-                    }
-                }
-            }
-        }
-
-        // 3. Side Effects: Listen for "Requests" from the Brain
-        // Example: Manager suspects a new Uber order but wants a 2nd screenshot to verify.
-        scope.launch {
-            flowManager.sideEffects.collect { effect ->
-                when (effect) {
-                    is GigSideEffect.RequestRescan -> {
-                        // Bypass throttle for verification
-                        handleUberScrape(bypassGate = true)
-                    }
+                    else -> {}
                 }
             }
         }
@@ -98,148 +71,62 @@ class GigAccessibilityService : AccessibilityService() {
         if (event == null) return
         if (!isScrapingActive) return
 
-        // This is the correct variable derived from the event
         val eventPkg = event.packageName?.toString() ?: return
 
+        // 1. Context Switch Detection
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-
-            // FIX: Allow specific system packages to "interrupt" without killing the overlay
-            // This prevents the overlay from disappearing if the Status Bar or Keyboard flickers.
             val ignoredPackages = setOf(
-                this.packageName,               // Our own overlay
-                "com.android.systemui",         // Status bar / Notification shade
-                "com.google.android.inputmethod.latin", // Gboard
-                "com.samsung.android.honeyboard" // Samsung Keyboard
+                this.packageName,
+                "com.android.systemui",
+                "com.google.android.inputmethod.latin",
+                "com.samsung.android.honeyboard"
             )
 
             if (eventPkg in ignoredPackages) return
 
-            // If it's not a supported Gig App AND not an ignored system app,
-            // THEN we assume the user left and clear state.
-            if (eventPkg !in supportedPackages) {
+            // If we left DoorDash, clear state immediately
+            if (eventPkg != dashPackage) {
                 flowManager.clearState()
                 return
             }
         }
 
-        // 2. Gatekeeper
+        // 2. Gatekeeper & Filter
+        if (eventPkg != dashPackage) return
         if (isScanning.get()) return
 
-        // 3. Filter & Throttle
-        // BUG FOUND: You were checking 'packageName' (Your App) instead of 'eventPkg' (DoorDash)
-        // Since "com.example.gigpilot" isn't in supportedPackages, this ALWAYS returned.
-        if (eventPkg !in supportedPackages) return
-
+        // 3. Throttle (500ms)
         val currentTime = System.currentTimeMillis()
-        // FIX: Use eventPkg here too
-        val throttle = if (eventPkg == uberPkg) 1000L else 500L
-        if (currentTime - lastScrapeTime < throttle) return
+        if (currentTime - lastScrapeTime < 500L) return
         lastScrapeTime = currentTime
 
         // 4. Dispatch
-        // FIX: Use eventPkg here too
-        if (eventPkg == uberPkg) {
-            handleUberScrape()
-        } else {
-            handleStandardScrape(eventPkg)
-        }
+        handleStandardScrape(eventPkg)
     }
 
-    /**
-     * [VIBE FIX] Smart Window Scanner
-     * Iterates through the system's window list (Z-ordered from top to bottom)
-     * to find the target app, even if it doesn't currently have Input Focus.
-     */
     private fun findActiveRootNode(targetPackage: String): android.view.accessibility.AccessibilityNodeInfo? {
-        // 1. Fast Path: If the active window IS the target, use it (Least expensive)
         val focused = rootInActiveWindow
         if (focused != null && focused.packageName == targetPackage) {
             return focused
         }
-
-        // 2. Deep Scan: Check all visible windows
-        // 'windows' is a list provided by AccessibilityService (requires FLAG_RETRIEVE_INTERACTIVE_WINDOWS)
         return windows.firstOrNull { window ->
             window.root?.packageName == targetPackage
         }?.root
     }
 
-    private fun handleUberScrape(bypassGate: Boolean = false) {
-        if (!bypassGate && !isScanning.compareAndSet(false, true)) return
-
-        ioScope.launch {
-            try {
-                // 1. The screenshot takes time (100ms - 500ms)
-                val bitmap = takeScreenshotCompat()
-
-                // [VIBE FIX] 2. The "Double Check"
-                // If the user switched apps while the screenshot was happening,
-                // the top window is no longer Uber. Abort.
-                val currentPkg = findActiveRootNode(uberPkg)?.packageName
-
-                // Check if we are STILL in Uber.
-                // If active root is null or not Uber, we effectively switched context.
-                if (currentPkg != uberPkg && !bypassGate) {
-                    GigLogger.i("GigService", "Aborted: User switched apps during capture.")
-                    bitmap?.recycle()
-                    return@launch
-                }
-
-                if (bitmap != null) {
-                    flowManager.processUberScreenshot(bitmap)
-                    try { bitmap.recycle() } catch (_: Exception) {}
-                }
-            } catch (e: Exception) {
-                GigLogger.e("GigService", "Uber Capture Failed", e)
-            } finally {
-                isScanning.set(false)
-            }
-        }
-    }
-
     private fun handleStandardScrape(packageName: String) {
-        // [VIBE FIX] Don't rely on 'rootInActiveWindow' which returns null if focus is lost.
-        // Instead, hunt down the window belonging to the package.
         val rootNode = findActiveRootNode(packageName) ?: return
 
         if (!isScanning.compareAndSet(false, true)) return
 
+        // We launch on Default dispatcher to keep the service responsive
         scope.launch(Dispatchers.Default) {
             try {
-                flowManager.onStandardNode(rootNode, packageName)
+                flowManager.onStandardNode(rootNode)
             } finally {
                 isScanning.set(false)
             }
         }
-    }
-
-    // --- Boilerplate ---
-
-    private suspend fun takeScreenshotCompat(): Bitmap? = suspendCoroutine { cont ->
-        // Keeps your existing implementation exactly as it was
-        val executor = Dispatchers.Default.asExecutor()
-        takeScreenshot(
-            Display.DEFAULT_DISPLAY,
-            executor,
-            object : TakeScreenshotCallback {
-                override fun onSuccess(screenshot: ScreenshotResult) {
-                    try {
-                        val hardwareBuffer = screenshot.hardwareBuffer
-                        val colorSpace = screenshot.colorSpace
-                        val bitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
-                        val softwareBitmap = bitmap?.copy(Bitmap.Config.RGB_565, false)
-                        hardwareBuffer.close()
-                        bitmap?.recycle()
-                        cont.resume(softwareBitmap)
-                    } catch (_: Exception) {
-                        cont.resume(null)
-                    }
-                }
-                override fun onFailure(errorCode: Int) {
-                    cont.resume(null)
-                }
-            }
-        )
     }
 
     override fun onInterrupt() {
@@ -248,8 +135,7 @@ class GigAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        overlayController.onDestroy() // Ensure clean view removal
+        overlayController.onDestroy()
         scope.cancel()
-        ioScope.cancel()
     }
 }

@@ -1,13 +1,10 @@
 package com.example.dashpilot.manager
 
-import android.graphics.Bitmap
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.dashpilot.data.GigDao
 import com.example.dashpilot.model.GigOrder
 import com.example.dashpilot.strategy.DoorDashStrategy
-import com.example.dashpilot.strategy.GrubhubStrategy
 import com.example.dashpilot.strategy.ScrapeResult
-import com.example.dashpilot.strategy.UberOcrStrategy
 import com.example.dashpilot.util.GigLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,8 +14,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -35,67 +30,45 @@ class GigFlowManager @Inject constructor(
     val sideEffects = _sideEffects.receiveAsFlow()
 
     // --- Internals ---
+    // Single threaded scope is fine for node traversal, keeps it off Main/UI thread
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val dbScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val processingMutex = Mutex()
 
-    // --- Strategies ---
-    private val uberStrategy = UberOcrStrategy()
+    // --- Strategy ---
     private val ddStrategy = DoorDashStrategy()
-    private val ghStrategy = GrubhubStrategy()
 
     // --- History & Logic ---
     private val recentHistory = ArrayDeque<GigOrder>()
     private val maxHistorySize = 5
-    private var potentialOrder: GigOrder? = null
 
-    // VIBE FIX: Debounce counter to prevent flickering
+    // VIBE FIX: Debounce counter to prevent flickering if a frame is missed
     private var consecutiveMisses = 0
     private val missThreshold = 3
 
-    fun onStandardNode(rootNode: AccessibilityNodeInfo?, packageName: String) {
+    fun onStandardNode(rootNode: AccessibilityNodeInfo?) {
         if (rootNode == null) return
 
         scope.launch {
-            if (processingMutex.isLocked) return@launch
-            processingMutex.withLock {
-                try {
-                    val strategy = when (packageName) {
-                        "com.doordash.driverapp" -> ddStrategy
-                        else -> ghStrategy
-                    }
-                    val result = strategy.attemptScrape(rootNode)
-                    handleResult(result)
-                } catch (e: Exception) {
-                    GigLogger.e("GigFlow", "Standard scrape failed", e)
-                }
-            }
-        }
-    }
-
-    suspend fun processUberScreenshot(bitmap: Bitmap) {
-        processingMutex.withLock {
             try {
-                val result = uberStrategy.processScreenshot(bitmap)
+                // Direct line to DoorDash Strategy
+                val result = ddStrategy.attemptScrape(rootNode)
                 handleResult(result)
             } catch (e: Exception) {
-                GigLogger.e("GigFlow", "Uber scrape failed", e)
+                GigLogger.e("GigFlow", "Scrape failed", e)
             }
         }
     }
 
     fun clearState() {
         _uiState.value = GigUiState.Hidden
-        potentialOrder = null
-        consecutiveMisses = 0 // Reset misses on manual clear
+        consecutiveMisses = 0
     }
 
     // --- Core Logic ---
 
-    private suspend fun handleResult(result: ScrapeResult) {
+    private fun handleResult(result: ScrapeResult) {
         when (result) {
             is ScrapeResult.Success -> {
-                // VIBE FIX: Reset misses immediately on success
                 consecutiveMisses = 0
                 val incoming = result.order
 
@@ -103,47 +76,26 @@ class GigFlowManager @Inject constructor(
                 val existing = recentHistory.find { isSameOrder(incoming, it) }
 
                 if (existing != null) {
-                    potentialOrder = null
-
-                    // VIBE FIX: The "Recall" Logic
-                    // If it's in history but we are Hidden (e.g., switched back to app), SHOW IT AGAIN.
-                    // We do NOT add to history or DB again.
+                    // If it's in history but we are Hidden (user switched back), SHOW IT AGAIN.
                     if (_uiState.value is GigUiState.Hidden) {
                         _uiState.value = GigUiState.ShowingOrder(incoming)
                     }
                     return
                 }
 
-                // 2. Routing
-                if (incoming.platform == "Uber Eats") {
-                    handleUberStabilization(incoming)
-                } else {
-                    publishOrder(incoming)
-                }
+                // 2. Publish New Order
+                publishOrder(incoming)
             }
             is ScrapeResult.NotFound -> {
-                // VIBE FIX: The "Grace Period"
-                // Don't hide immediately. Wait for several misses.
+                // Grace Period: Don't hide immediately on one bad frame
                 consecutiveMisses++
-
                 if (consecutiveMisses >= missThreshold) {
-                    potentialOrder = null
                     _uiState.value = GigUiState.Hidden
                 }
             }
             is ScrapeResult.Error -> {
-                potentialOrder = null
+                // Do nothing, keep existing state
             }
-        }
-    }
-
-    private suspend fun handleUberStabilization(incoming: GigOrder) {
-        if (isSameOrder(incoming, potentialOrder)) {
-            publishOrder(incoming)
-            potentialOrder = null
-        } else {
-            potentialOrder = incoming
-            _sideEffects.send(GigSideEffect.RequestRescan)
         }
     }
 
@@ -161,8 +113,7 @@ class GigFlowManager @Inject constructor(
     private suspend fun handleDbWrites(order: GigOrder, previousVersion: GigOrder?) {
         try {
             val isRefinement = previousVersion != null && (
-                    (previousVersion.isEstimate && !order.isEstimate) ||
-                            (previousVersion.dropoffLocation.isBlank() && order.dropoffLocation.isNotBlank())
+                    previousVersion.dropoffLocation.isBlank() && order.dropoffLocation.isNotBlank()
                     )
 
             if (isRefinement) {
@@ -204,7 +155,6 @@ class GigFlowManager @Inject constructor(
         if (oldOrder == null) return false
         return isSameGig(newOrder, oldOrder) &&
                 newOrder.durationMinutes == oldOrder.durationMinutes &&
-                newOrder.isEstimate == oldOrder.isEstimate &&
                 newOrder.dropoffLocation == oldOrder.dropoffLocation
     }
 }
